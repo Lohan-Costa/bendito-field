@@ -30,19 +30,16 @@ function loadImage(url) {
  * @param {HTMLCanvasElement} targets.upper  campo superior (line-doubled)
  * @param {HTMLCanvasElement} targets.lower  campo inferior (line-doubled)
  */
+// Intensidade do realce (unsharp) aplicado aos painéis. 0 = desliga.
+// ~0.4 dá uma nitidez perceptível sem virar "crocante"/ruidoso. Ajustável.
+const SHARPEN = 0.4;
+
 export async function renderFields(url, { woven, upper, lower }) {
   const img = await loadImage(url);
   const w = img.naturalWidth;
   const h = img.naturalHeight;
 
-  // ---- Frame tecido (original) ----
-  if (woven) {
-    woven.width = w;
-    woven.height = h;
-    woven.getContext("2d").drawImage(img, 0, 0);
-  }
-
-  // Lê os pixels do frame original uma única vez.
+  // Lê os pixels do frame original uma única vez (offscreen, resolução cheia).
   const src = document.createElement("canvas");
   src.width = w;
   src.height = h;
@@ -50,22 +47,20 @@ export async function renderFields(url, { woven, upper, lower }) {
   sctx.drawImage(img, 0, 0);
   const data = sctx.getImageData(0, 0, w, h);
 
-  drawField(upper, data, w, h, 0); // linhas pares  → Upper
-  drawField(lower, data, w, h, 1); // linhas ímpares → Lower
+  if (woven) blitSharp(woven, src);                       // frame tecido
+  if (upper) blitSharp(upper, fieldCanvas(data, w, h, 0)); // linhas pares  → Upper
+  if (lower) blitSharp(lower, fieldCanvas(data, w, h, 1)); // linhas ímpares → Lower
 }
 
 /**
- * Monta um campo a partir das linhas de paridade `parity` (0 par / 1 ímpar),
- * duplicando cada LINHA do campo para recompor a altura.
- *
- * Mapeamento limpo (bob): as linhas de saída (2k, 2k+1) recebem a linha k do
- * campo, que na origem é a linha (2k + parity). Assim os dois campos ficam
- * ALINHADOS verticalmente e cada linha aparece exatamente 2×. (O cálculo antigo
- * `y - ((y-parity)&1)` triplicava a 1ª linha do campo ímpar e deslocava o Lower
- * em ~1 linha → ele parecia mais "borrado" que o Upper.)
+ * Monta um campo (offscreen, resolução cheia) a partir das linhas de paridade
+ * `parity` (0 par / 1 ímpar), duplicando cada LINHA do campo para recompor a
+ * altura. Mapeamento limpo (bob): as linhas de saída (2k, 2k+1) recebem a linha
+ * k do campo, que na origem é a linha (2k + parity) → os dois campos ficam
+ * alinhados e cada linha aparece exatamente 2×.
  */
-function drawField(canvas, srcData, w, h, parity) {
-  if (!canvas) return;
+function fieldCanvas(srcData, w, h, parity) {
+  const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
@@ -74,13 +69,55 @@ function drawField(canvas, srcData, w, h, parity) {
   const dp = out.data;
 
   for (let y = 0; y < h; y++) {
-    let sy = 2 * (y >> 1) + parity; // linha do campo do par (2k,2k+1) → origem 2k+parity
+    let sy = 2 * (y >> 1) + parity;
     if (sy >= h) sy = h - 1;
     const sRow = sy * w * 4;
     const dRow = y * w * 4;
     dp.set(sp.subarray(sRow, sRow + w * 4), dRow);
   }
   ctx.putImageData(out, 0, 0);
+  return canvas;
+}
+
+/**
+ * Reduz `srcCanvas` (res. cheia) para o tamanho de EXIBIÇÃO × DPR (sem reescala
+ * extra do navegador) com reamostragem de alta qualidade e, em seguida, aplica
+ * um REALCE (unsharp) — é o que dá a sensação de nitidez perdida no downscale.
+ */
+function blitSharp(dest, srcCanvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = dest.clientWidth || Math.min(srcCanvas.width, 640);
+  const ratio = srcCanvas.height / srcCanvas.width;
+  const bw = Math.max(1, Math.round(cssW * dpr));
+  const bh = Math.max(1, Math.round(bw * ratio));
+  dest.width = bw;
+  dest.height = bh;
+  const ctx = dest.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(srcCanvas, 0, 0, bw, bh);
+  if (SHARPEN > 0) unsharp(ctx, bw, bh, SHARPEN);
+}
+
+/** Realce 3×3 (cruz) in-place sobre o contexto: center=1+4a, vizinhos=−a. */
+function unsharp(ctx, w, h, amount) {
+  if (w < 3 || h < 3) return;
+  const img = ctx.getImageData(0, 0, w, h);
+  const s = img.data;
+  const out = new Uint8ClampedArray(s); // cópia (bordas ficam como estão)
+  const stride = w * 4;
+  const center = 1 + 4 * amount;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const p = i + c;
+        out[p] = center * s[p] - amount * (s[p - 4] + s[p + 4] + s[p - stride] + s[p + stride]);
+      }
+    }
+  }
+  img.data.set(out);
+  ctx.putImageData(img, 0, 0);
 }
 
 /**
