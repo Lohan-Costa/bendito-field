@@ -1,10 +1,9 @@
 // ===================== occurrences.js =====================
 // Lista de ocorrências suspeitas (frames com split-field provável).
-// Cada item tem timecode em destaque (info mais importante) e um ✕ para o
-// usuário descartar um falso positivo. Quando a lista esvazia, o `onChange`
-// avisa o app (que mostra a mensagem de "aprovado").
-
-const DOT = { alta: "🔴", media: "🟠", baixa: "🟡" };
+// Cada item: índice (#01, #02…), timecode em destaque e o frame; mais um botão
+// "✕ Remover" para descartar um falso positivo. NÃO mostramos % de confiança
+// (99% num falso positivo passa segurança que o app não tem). Quando a lista
+// esvazia, o `onChange` avisa o app (que mostra a mensagem de "aprovado").
 
 export class Occurrences {
   /**
@@ -18,7 +17,7 @@ export class Occurrences {
     this.onSelect = onSelect;
     this.timecode = timecode;
     this.onChange = onChange || (() => {});
-    this.items = [];     // [{ el, suspect }]
+    this.items = []; // [{ el, suspect, idxEl }]
     this.selected = -1;
   }
 
@@ -35,33 +34,49 @@ export class Occurrences {
     const frag = document.createDocumentFragment();
     suspects.forEach((s) => {
       const row = document.createElement("div");
-      row.className = `occ-item occ-item--${s.level}`;
+      row.className = "occ-item";
 
       const main = document.createElement("button");
       main.type = "button";
       main.className = "occ-main";
-      main.innerHTML =
-        `<span class="occ-dot">${DOT[s.level]}</span>` +
-        `<span class="occ-tc">${this.timecode(s.frame)}</span>` +
-        `<span class="occ-frame">#${s.frame + 1}</span>` +
-        `<span class="occ-conf">${s.confidence}%</span>`;
+
+      const idx = document.createElement("span");
+      idx.className = "occ-idx"; // preenchido por renumber()
+
+      const tc = document.createElement("span");
+      tc.className = "occ-tc";
+      tc.textContent = this.timecode(s.frame);
+
+      const fr = document.createElement("span");
+      fr.className = "occ-frame";
+      fr.textContent = `frame ${s.frame + 1}`;
+
+      main.append(idx, tc, fr);
       main.addEventListener("click", () => this.selectEl(row));
 
       const x = document.createElement("button");
       x.type = "button";
       x.className = "occ-dismiss";
+      x.innerHTML = `<span class="occ-dismiss__x" aria-hidden="true">✕</span> Remover`;
       x.title = "Remover — falso positivo";
       x.setAttribute("aria-label", "Remover ocorrência (falso positivo)");
-      x.textContent = "✕";
       x.addEventListener("click", (e) => { e.stopPropagation(); this.dismissEl(row); });
 
       row.append(main, x);
       frag.appendChild(row);
-      this.items.push({ el: row, suspect: s });
+      this.items.push({ el: row, suspect: s, idxEl: idx });
     });
     this.container.appendChild(frag);
+    this.renumber();
     this.onChange(this.items.length, false);
     this.selectIndex(0, true);
+  }
+
+  // Atualiza os rótulos #01, #02, … (chamado ao montar e ao remover um item).
+  renumber() {
+    this.items.forEach((it, i) => {
+      it.idxEl.textContent = `#${String(i + 1).padStart(2, "0")}`;
+    });
   }
 
   indexOfEl(el) { return this.items.findIndex((it) => it.el === el); }
@@ -94,7 +109,7 @@ export class Occurrences {
       this.onChange(0, true); // tudo descartado pelo usuário
       return;
     }
-    // Mantém a seleção apontando para um item válido e re-renderiza.
+    this.renumber();
     if (i <= this.selected) this.selected = Math.max(0, this.selected - 1);
     const keep = Math.min(this.selected, this.items.length - 1);
     this.selected = -1;

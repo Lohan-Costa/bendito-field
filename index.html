@@ -32,9 +32,6 @@
     <!-- ===================== MAIN ===================== -->
     <main class="app-main">
       <div class="topbar">
-        <span class="disclaimer-inline" role="note">
-          ⚠ Auxílio de análise (beta) — movimentos rápidos podem gerar falsos positivos. Sempre valide visualmente.
-        </span>
         <span class="file-bar__name" id="fileName"></span>
         <span class="file-bar__meta" id="fileMeta"></span>
         <button class="btn btn--ghost" id="btnReset" type="button" hidden>Trocar arquivo</button>
@@ -78,12 +75,20 @@
               <div class="panel__title">Upper Field <span class="panel__tag">linhas pares</span></div>
               <div class="panel__body canvas-wrap">
                 <canvas id="canvasUpper"></canvas>
+                <div class="field-loading" id="upperLoading" hidden>
+                  <div class="spinner spinner--sm" aria-hidden="true"></div>
+                  <span>Extraindo campo…</span>
+                </div>
               </div>
             </div>
             <div class="panel">
               <div class="panel__title">Lower Field <span class="panel__tag">linhas ímpares</span></div>
               <div class="panel__body canvas-wrap">
                 <canvas id="canvasLower"></canvas>
+                <div class="field-loading" id="lowerLoading" hidden>
+                  <div class="spinner spinner--sm" aria-hidden="true"></div>
+                  <span>Extraindo campo…</span>
+                </div>
               </div>
             </div>
           </div>
@@ -95,6 +100,9 @@
                 Ocorrências
                 <span class="occ-count" id="occCount"></span>
               </div>
+              <p class="occ-disclaimer" role="note">
+                ⚠ Auxílio de análise (beta) — movimentos rápidos podem gerar falsos positivos. Sempre valide visualmente.
+              </p>
               <div class="occ-list" id="occList"></div>
             </div>
 

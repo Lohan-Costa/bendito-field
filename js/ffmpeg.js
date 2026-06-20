@@ -237,7 +237,9 @@ export async function extractWindows(file, frameIndices, { onProgress } = {}) {
     await ff.exec([
       "-i", input,
       "-map", "0:v:0", "-an", // só o vídeo; ignora as 16 trilhas de áudio do MXF
-      "-vf", `select=${sel}`,
+      // Reduz p/ 960px (só visualização — os painéis exibem ~470px). Corta o
+      // peso do PNG e acelera o carregamento das miniaturas.
+      "-vf", `select=${sel},scale=960:-2`,
       "-vsync", "0",            // emite só os frames selecionados, sem repetir
       "-frames:v", String(indices.length), // PARA após o último frame pedido —
                                             // não decodifica a cauda do arquivo
@@ -253,6 +255,57 @@ export async function extractWindows(file, frameIndices, { onProgress } = {}) {
   const map = new Map();
   indices.forEach((frameIndex, i) => {
     if (urls[i]) map.set(frameIndex, urls[i]);
+  });
+  return map;
+}
+
+/**
+ * PASSE 2b — extrai os DOIS CAMPOS de cada frame de janela, LIMPOS, pelo próprio
+ * ffmpeg (`separatefields`). Cada campo vira um PNG de meia-altura (1920×540)
+ * contendo SÓ as linhas daquele campo — separação autoritativa, sem fatiar o
+ * frame tecido no JS (que, no Chrome, deixava o Lower com aparência contaminada).
+ * Para material TFF, a ordem de saída é top, bottom, top, bottom… (2 por frame).
+ *
+ * @param {File} file
+ * @param {number[]} frameIndices  índices 0-based, únicos e crescentes
+ * @returns {Promise<Map<number, {top:string, bottom:string}>>}
+ */
+export async function extractWindowFields(file, frameIndices, { onProgress } = {}) {
+  const ff = await loadEngine();
+  const input = await ensureInput(file);
+  if (!frameIndices.length) return new Map();
+
+  const indices = [...new Set(frameIndices)].sort((a, b) => a - b);
+  const sel = indices.map((n) => `eq(n\\,${n})`).join("+");
+
+  const onProg = onProgress
+    ? ({ progress }) => onProgress(Math.max(0, Math.min(1, progress || 0)))
+    : null;
+  if (onProg) ff.on("progress", onProg);
+
+  try {
+    await ff.exec([
+      "-i", input,
+      "-map", "0:v:0", "-an",
+      // separatefields PRIMEIRO (separa os campos), e só ENTÃO reduz a escala —
+      // escalar antes misturaria os campos de volta. 960px basta p/ o painel.
+      "-vf", `select=${sel},separatefields,scale=960:-2`,
+      "-vsync", "0",
+      "-frames:v", String(indices.length * 2), // 2 campos por frame selecionado
+      "-c:v", "png",
+      "s_%05d.png",
+    ]);
+  } finally {
+    if (onProg) ff.off("progress", onProg);
+  }
+
+  // Saída em ordem: top0, bottom0, top1, bottom1, … → casa com `indices`.
+  const urls = await readImageSequence("s_", "png", "image/png");
+  const map = new Map();
+  indices.forEach((frameIndex, i) => {
+    const top = urls[2 * i];
+    const bottom = urls[2 * i + 1];
+    if (top && bottom) map.set(frameIndex, { top, bottom });
   });
   return map;
 }

@@ -2,7 +2,7 @@
 // Orquestra: upload → análise (detecção de suspeitos de split-field) →
 // ocorrências → filmstrip de contexto → painel de fields.
 
-import { loadEngine, isMultithread, extractWindows, clearInput, terminateEngine } from "./ffmpeg.js";
+import { loadEngine, isMultithread, extractWindows, extractWindowFields, clearInput, terminateEngine } from "./ffmpeg.js";
 import { analyze } from "./analyzer.js";
 import { Filmstrip } from "./filmstrip.js";
 import { Occurrences } from "./occurrences.js";
@@ -36,6 +36,8 @@ const el = {
   approvedMsg:    document.getElementById("approvedMsg"),
   approvedTitle:  document.getElementById("approvedTitle"),
   approvedSub:    document.getElementById("approvedSub"),
+  upperLoading:   document.getElementById("upperLoading"),
+  lowerLoading:   document.getElementById("lowerLoading"),
 
   filmstrip:      document.getElementById("filmstrip"),
   frameInfo:      document.getElementById("frameInfo"),
@@ -51,7 +53,8 @@ const state = {
   fps: 29.97,
   frameCount: 0,
   suspects: [],
-  windowUrls: new Map(), // frameIndex → object URL (full-res) das janelas
+  windowUrls: new Map(), // frameIndex → object URL (tecido full-res) das janelas
+  fieldUrls: new Map(),  // frameIndex → { top, bottom } (campos limpos do ffmpeg)
 };
 
 let filmstrip = null;
@@ -183,6 +186,7 @@ async function handleFile(file) {
 // ---------- Análise ----------
 async function runAnalysis(file) {
   releaseWindows();
+  setFieldsLoading(false);
   setFrameMode("loading");
   el.proxyText.textContent = "Decodificando e analisando campos…";
   el.proxyBar.style.width = "0%";
@@ -219,17 +223,36 @@ async function runAnalysis(file) {
     el.proxyText.textContent = "Extraindo imagens dos suspeitos…";
     el.proxyBar.style.width = "0%";
     const indices = unionWindowIndices(res.suspects, res.frameCount);
+    // Passada 2a: frames tecidos (Frame TECIDO + filmstrip).
     state.windowUrls = await extractWindows(file, indices, {
-      onProgress: (r) => { el.proxyBar.style.width = `${Math.round(r * 100)}%`; },
+      onProgress: (r) => { el.proxyBar.style.width = `${Math.round(r * 50)}%`; },
     });
+    // Já mostra o Frame TECIDO + a filmstrip — sem esperar a 2ª extração.
+    setFrameMode("frame");
+    occurrences.reselect();
 
-    setFrameMode("frame"); // mostra o canvas do frame
-    occurrences.reselect(); // renderiza campos/filmstrip da ocorrência atual
+    // Passada 2b: campos LIMPOS (separatefields) p/ os painéis Upper/Lower.
+    // Motor novo entre execs (evita reuso do core ST). Mostra um spinner nos
+    // painéis Upper/Lower enquanto isso (o overlay com a barra já saiu).
+    setFieldsLoading(true);
+    terminateEngine();
+    state.fieldUrls = await extractWindowFields(file, indices, {
+      onProgress: (r) => { el.proxyBar.style.width = `${50 + Math.round(r * 50)}%`; },
+    });
+    setFieldsLoading(false);
+    occurrences.reselect(); // preenche os painéis Upper/Lower com os campos
   } catch (err) {
     console.error("Falha na análise:", err);
+    setFieldsLoading(false);
     el.proxyText.textContent = "Falha na análise — veja o console (F12).";
     el.proxyBar.style.width = "0%";
   }
+}
+
+// Spinner "Extraindo campo…" nos painéis Upper/Lower durante a 2ª extração.
+function setFieldsLoading(on) {
+  el.upperLoading.hidden = !on;
+  el.lowerLoading.hidden = !on;
 }
 
 // Conjunto (ordenado, sem repetição) de todos os frames das janelas dos suspeitos.
@@ -260,14 +283,14 @@ async function onFrameSelected(frame) {
   const tag = s ? `  ·  ⚠ suspeito (${s.confidence}%)` : "";
   el.frameInfo.textContent = `#${frame + 1}  ·  ${timecode(frame, state.fps)}${tag}`;
 
-  const url = state.windowUrls.get(frame);
-  if (!url) return;
+  const wovenUrl = state.windowUrls.get(frame);
+  const f = state.fieldUrls.get(frame);
+  if (!wovenUrl && !f) return;
   try {
-    await renderFields(url, {
-      woven: el.canvasWoven,
-      upper: el.canvasUpper,
-      lower: el.canvasLower,
-    });
+    await renderFields(
+      { wovenUrl, topUrl: f && f.top, bottomUrl: f && f.bottom },
+      { woven: el.canvasWoven, upper: el.canvasUpper, lower: el.canvasLower }
+    );
   } catch (err) {
     console.error("Falha ao renderizar fields:", err);
   }
@@ -282,7 +305,12 @@ function clearFieldPanels() {
 
 function releaseWindows() {
   for (const url of state.windowUrls.values()) URL.revokeObjectURL(url);
+  for (const f of state.fieldUrls.values()) {
+    URL.revokeObjectURL(f.top);
+    URL.revokeObjectURL(f.bottom);
+  }
   state.windowUrls = new Map();
+  state.fieldUrls = new Map();
 }
 
 // Timecode SMPTE simples (HH:MM:SS:FF) a partir do índice do frame.

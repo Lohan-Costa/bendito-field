@@ -30,7 +30,7 @@ export class Filmstrip {
       item.className = "thumb" + (f.suspect ? " thumb--suspect" : "");
 
       const img = document.createElement("img");
-      img.loading = "lazy";
+      img.loading = "eager"; // todas estão visíveis → carrega já (sem atraso do lazy)
       img.decoding = "async";
       img.src = f.url;
       img.alt = `Frame ${f.frame + 1}`;

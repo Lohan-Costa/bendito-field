@@ -266,6 +266,7 @@ body {
 }
 
 .canvas-wrap {
+  position: relative;
   padding: 0;
   background:
     repeating-conic-gradient(#1a1c22 0% 25%, #15171c 0% 50%) 50% / 18px 18px;
@@ -274,6 +275,19 @@ body {
   justify-content: center;
   min-height: 150px;
 }
+
+/* Indicador de carregamento dos campos (durante a 2ª extração) */
+.field-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.field-loading[hidden] { display: none; }
 .canvas-wrap canvas {
   display: block;
   width: 100%;
@@ -346,8 +360,9 @@ body {
   font-size: 12px;
   color: var(--warn);
 }
-.topbar .file-bar__name { font-weight: 600; margin-left: auto; }
+.topbar .file-bar__name { font-weight: 600; }
 .topbar .file-bar__meta { color: var(--text-dim); font-size: 12px; }
+.topbar .btn { margin-left: auto; }
 
 /* ----- Player (1ª coluna dos fields) ----- */
 .player-body { display: flex; flex-direction: column; padding: 0; }
@@ -473,14 +488,18 @@ body {
 }
 
 /* ----- Linha inferior: ocorrências + filmstrip ----- */
+/* Mesmo grid de 3 colunas do .fields → o painel Ocorrências fica com a MESMA
+   largura do painel Frame; a filmstrip ocupa as 2 colunas restantes. */
 .bottom-row {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
   min-height: 0;
 }
-@media (max-width: 820px) {
+.bottom-row .filmstrip-panel { grid-column: span 2; }
+@media (max-width: 900px) {
   .bottom-row { grid-template-columns: 1fr; }
+  .bottom-row .filmstrip-panel { grid-column: auto; }
 }
 
 .occ-count {
@@ -489,13 +508,24 @@ body {
   font-weight: 600;
   color: var(--text-dim);
 }
+/* Aviso de falsos positivos — fica acima da 1ª ocorrência (na área de trabalho
+   do usuário), em vez de na topbar onde passava despercebido. */
+.occ-disclaimer {
+  margin: 2px 8px 8px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 7px;
+}
 .occ-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 8px;
   overflow-y: auto;
-  max-height: 220px;
+  max-height: 260px;
 }
 .occ-empty { color: var(--muted); padding: 14px; text-align: center; }
 
@@ -514,10 +544,10 @@ body {
 .occ-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex: 1;
   min-width: 0;
-  padding: 8px 4px 8px 10px;
+  padding: 9px 4px 9px 10px;
   font: inherit;
   font-size: 12.5px;
   text-align: left;
@@ -526,7 +556,14 @@ body {
   border: 0;
   cursor: pointer;
 }
-.occ-dot { font-size: 10px; }
+/* Índice da lista (#01, #02…) no lugar das antigas bolinhas de confiança. */
+.occ-idx {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent);
+}
 /* Timecode em destaque — é a informação mais importante para o usuário. */
 .occ-tc {
   font-variant-numeric: tabular-nums;
@@ -534,32 +571,34 @@ body {
   font-weight: 700;
   font-size: 14px;
   color: var(--text);
+  white-space: nowrap;
 }
-.occ-frame { color: var(--text-dim); font-size: 11.5px; }
-.occ-conf { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
-.occ-item--alta  .occ-conf { color: var(--danger); }
-.occ-item--media .occ-conf { color: var(--warn); }
-.occ-item--baixa .occ-conf { color: var(--text-dim); }
-
-/* Botão ✕ para descartar um falso positivo. */
-.occ-dismiss {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin-right: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
+.occ-frame {
   color: var(--text-dim);
   font-size: 11px;
-  cursor: pointer;
-  opacity: .5;
-  transition: background .12s, color .12s, opacity .12s;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.occ-dismiss:hover { background: var(--danger); color: #fff; opacity: 1; }
+
+/* Botão "✕ Remover" — evidente, para descartar um falso positivo. */
+.occ-dismiss {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 8px;
+  padding: 6px 11px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.occ-dismiss:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+.occ-dismiss__x { font-size: 10px; }
 
 /* ===================== Botões ===================== */
 .btn {
@@ -574,8 +613,8 @@ body {
   transition: background .15s, border-color .15s;
 }
 .btn:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
-.btn--ghost { background: transparent; }
-.btn--ghost:hover { background: var(--bg-elev-2); }
+.btn--ghost { background: transparent; border-color: var(--text-dim); }
+.btn--ghost:hover { background: var(--bg-elev-2); border-color: var(--text); }
 
 /* ===================== Footer ===================== */
 .app-footer {
