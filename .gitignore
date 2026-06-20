@@ -1,0 +1,12 @@
+# Vídeos de exemplo/teste — pesados (MXF > 100 MB, acima do limite do GitHub)
+videos exemplo/
+
+# macOS
+.DS_Store
+._*
+.TemporaryItems
+.AppleDouble
+.LSOverride
+
+# Diversos
+*.log

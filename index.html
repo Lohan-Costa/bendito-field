@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bendito Field — Detecção de split-fields</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f8cff'/%3E%3C/svg%3E" />
+  <!-- Single-thread → sem service worker. Remove qualquer SW antigo de tentativas
+       anteriores (evita reloads/recarga preta na 1ª vez). -->
+  <script>
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.getRegistrations()
+        .then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+    }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <!-- ===================== HEADER ===================== -->
+    <header class="app-header">
+      <div class="brand">
+        <h1 class="brand__name">Bendito Field <span class="brand__badge">beta v1.0</span></h1>
+        <p class="brand__tagline">Detecção e revisão de possíveis split-fields em material interlaced</p>
+      </div>
+      <div class="engine-status" id="engineStatus" data-state="idle">
+        <span class="engine-status__dot"></span>
+        <span class="engine-status__label" id="engineStatusLabel">Motor: não carregado</span>
+      </div>
+    </header>
+
+    <!-- ===================== MAIN ===================== -->
+    <main class="app-main">
+      <div class="topbar">
+        <span class="disclaimer-inline" role="note">
+          ⚠ Auxílio de análise (beta) — movimentos rápidos podem gerar falsos positivos. Sempre valide visualmente.
+        </span>
+        <span class="file-bar__name" id="fileName"></span>
+        <span class="file-bar__meta" id="fileMeta"></span>
+        <button class="btn btn--ghost" id="btnReset" type="button" hidden>Trocar arquivo</button>
+      </div>
+
+      <div class="analysis" id="analysisContent">
+        <!-- Painel de campos (1ª coluna = Player, que também é o alvo de drop) -->
+        <div class="fields">
+            <div class="panel">
+              <div class="panel__title">
+                Frame <span class="panel__tag">tecido</span>
+                <span class="frame-info" id="frameInfo"></span>
+              </div>
+              <div class="panel__body canvas-wrap frame-screen">
+                <canvas id="canvasWoven"></canvas>
+                <div class="player-loading" id="playerLoading" hidden>
+                  <div class="spinner spinner--sm" aria-hidden="true"></div>
+                  <span id="proxyText">Processando…</span>
+                  <div class="progress progress--inline"><div class="progress__bar" id="proxyBar"></div></div>
+                </div>
+                <div class="approved-msg" id="approvedMsg" hidden>
+                  <span class="approved-msg__icon" aria-hidden="true">✅</span>
+                  <span class="approved-msg__title" id="approvedTitle">Vídeo aprovado</span>
+                  <span class="approved-msg__sub" id="approvedSub">Nenhum split-field suspeito encontrado.</span>
+                </div>
+                <button
+                  class="dropzone-inline"
+                  id="dropzone"
+                  type="button"
+                  aria-label="Solte um MXF ou clique para selecionar"
+                >
+                  <input type="file" id="fileInput" accept=".mxf" hidden />
+                  <span class="dropzone__icon" aria-hidden="true">⬇</span>
+                  <span class="dropzone__title">Arraste o MXF aqui</span>
+                  <span class="dropzone__subtitle">ou clique para selecionar</span>
+                  <span class="dropzone__formats">XDCAM HD422 · 1080i59.94</span>
+                </button>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel__title">Upper Field <span class="panel__tag">linhas pares</span></div>
+              <div class="panel__body canvas-wrap">
+                <canvas id="canvasUpper"></canvas>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel__title">Lower Field <span class="panel__tag">linhas ímpares</span></div>
+              <div class="panel__body canvas-wrap">
+                <canvas id="canvasLower"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Linha inferior: ocorrências + filmstrip de contexto -->
+          <div class="bottom-row">
+            <div class="panel occ-panel">
+              <div class="panel__title">
+                Ocorrências
+                <span class="occ-count" id="occCount"></span>
+              </div>
+              <div class="occ-list" id="occList"></div>
+            </div>
+
+            <div class="panel filmstrip-panel">
+              <div class="panel__title">
+                Contexto do suspeito
+                <span class="panel__hint">← → navega na janela</span>
+              </div>
+              <div class="filmstrip" id="filmstrip" tabindex="0"></div>
+            </div>
+          </div>
+        </div>
+    </main>
+
+    <!-- ===================== FOOTER ===================== -->
+    <footer class="app-footer">
+      Idealizado por
+      <a
+        href="https://www.linkedin.com/in/lohan-costa/"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Lohan Costa, edt.</a>
+      Criado com Claude Code
+    </footer>
+  </div>
+
+  <!-- Overlay de carregamento do motor -->
+  <div class="loading-overlay" id="loadingOverlay" hidden>
+    <div class="loading-overlay__box">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="loading-overlay__text" id="loadingText">Carregando motor de análise…</p>
+      <div class="progress"><div class="progress__bar" id="loadingBar"></div></div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

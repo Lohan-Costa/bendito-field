@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bendito Field — Sonda de decode (diagnóstico Chrome)</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px; font: 14px/1.5 -apple-system, system-ui, sans-serif;
+      background: #0e1116; color: #e6edf3;
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sub { color: #9aa7b4; margin: 0 0 20px; font-size: 13px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+    .card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 16px;
+    }
+    .card h2 { font-size: 14px; margin: 0 0 10px; color: #cdd9e5; }
+    button {
+      background: #21262d; color: #e6edf3; border: 1px solid #3d444d;
+      border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #2d333b; border-color: #4f8cff; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button.t { border-color: #4f8cff55; }
+    button.danger { border-color: #f8514955; }
+    input[type=file] { color: #9aa7b4; font-size: 13px; }
+    .file-info { font-size: 12px; color: #7ee787; }
+    .status { font-weight: 600; }
+    .status[data-s="idle"] { color: #9aa7b4; }
+    .status[data-s="loading"] { color: #d29922; }
+    .status[data-s="ready"] { color: #7ee787; }
+    .status[data-s="running"] { color: #4f8cff; }
+    .status[data-s="ok"] { color: #7ee787; }
+    .status[data-s="error"], .status[data-s="timeout"] { color: #f85149; }
+    pre#log {
+      background: #010409; border: 1px solid #30363d; border-radius: 10px;
+      padding: 14px; height: 46vh; overflow: auto; margin: 0;
+      font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap;
+    }
+    .l-info { color: #9aa7b4; }
+    .l-step { color: #4f8cff; font-weight: 600; }
+    .l-ok   { color: #7ee787; font-weight: 600; }
+    .l-err  { color: #f85149; font-weight: 600; }
+    .l-ff   { color: #6e7681; }
+    .timeout-input { width: 56px; background:#21262d; color:#e6edf3; border:1px solid #3d444d; border-radius:6px; padding:5px 7px; }
+  </style>
+</head>
+<body>
+  <h1>Sonda de decode — diagnóstico ffmpeg.wasm no Chrome</h1>
+  <p class="sub">
+    Carrega o <strong>mesmo core single-thread</strong> de <code>/vendor/core-esm</code> que o app usa, isolado de toda a lógica.
+    <strong>Cada teste recria a instância do motor do zero</strong> (instância limpa = sempre um "1º exec"), então pode rodar em qualquer ordem.
+    Cada <code>exec</code> tem timestamp, logs do core ao vivo e watchdog (hang vira TIMEOUT). T5 reusa de propósito para provar o bug.
+  </p>
+
+  <div class="card">
+    <h2>1 · Motor</h2>
+    <div class="row">
+      <span>Estado: <span class="status" id="engineState" data-s="idle">não carregado</span></span>
+      <label style="font-size:13px; color:#cdd9e5;">
+        <input type="checkbox" id="useMT" /> usar <strong>multithread (MT)</strong>
+      </label>
+      <span style="margin-left:auto; color:#9aa7b4; font-size:12px;">
+        crossOriginIsolated = <strong id="coi">?</strong> · SharedArrayBuffer = <strong id="sab">?</strong>
+      </span>
+    </div>
+    <div class="row">
+      <span style="font-size:12px; color:#9aa7b4;">
+        MT precisa de crossOriginIsolated = true (headers COOP/COEP do serve.py). Marque e rode T10 p/ comparar o tempo com o ST.
+      </span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Arquivo</h2>
+    <div class="row">
+      <input type="file" id="file" />
+      <span class="file-info" id="fileInfo"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Testes</h2>
+    <div class="row">
+      <button class="t" id="t1" disabled>T1 · 1 frame (leve)</button>
+      <button class="t" id="t2" disabled>T2 · gray -t 2</button>
+      <button class="t" id="t3" disabled>T3 · gray -t 6</button>
+      <button class="t danger" id="t4" disabled>T4 · gray INTEIRO (passada real)</button>
+      <button class="t" id="t5" disabled>T5 · reuso 2× (prova do bug)</button>
+    </div>
+    <div class="row">
+      <button class="t" id="t6" disabled>T6 · warm-up + INTEIRO</button>
+      <button class="t danger" id="t7" disabled>T7 · INTEIRO direto, frio</button>
+    </div>
+    <div class="row">
+      <button class="t" id="t9" disabled style="border-color:#4f8cff;">T9 · decode+filtro SEM encode (-f null)</button>
+      <button class="t" id="t10" disabled style="border-color:#7ee78788;">T10 · rawvideo 1 arquivo ✅ (candidato a fix)</button>
+      <button class="t" id="t8" disabled>T8 · INTEIRO em PNG</button>
+    </div>
+    <div class="row">
+      <span style="font-size:12px; color:#9aa7b4;">
+        Cada teste recria o motor do zero (instância limpa). T5 é a exceção: reusa de propósito.
+      </span>
+    </div>
+    <div class="row">
+      <label style="font-size:12px; color:#9aa7b4;">
+        Watchdog (s): <input class="timeout-input" id="timeout" type="number" value="120" min="10" />
+      </label>
+      <button id="clear" style="margin-left:auto;">Limpar log</button>
+    </div>
+  </div>
+
+  <pre id="log"></pre>
+
+  <script type="module">
+    import { FFmpeg } from "./vendor/ffmpeg-esm/index.js";
+
+    const CORE_ST = {
+      js:   new URL("./vendor/core-esm/ffmpeg-core.js", location.href).href,
+      wasm: new URL("./vendor/core-esm/ffmpeg-core.wasm", location.href).href,
+    };
+    const CORE_MT = {
+      js:     new URL("./vendor/core-mt-esm/ffmpeg-core.js", location.href).href,
+      wasm:   new URL("./vendor/core-mt-esm/ffmpeg-core.wasm", location.href).href,
+      worker: new URL("./vendor/core-mt-esm/ffmpeg-core.worker.js", location.href).href,
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const logEl = $("log");
+    let ffmpeg = null;
+    let file = null;
+    let busy = false;
+
+    // ---------- Log ----------
+    const t0 = performance.now();
+    function stamp() {
+      const s = ((performance.now() - t0) / 1000).toFixed(2).padStart(7, " ");
+      return `[${s}s]`;
+    }
+    function log(msg, cls = "l-info") {
+      const line = document.createElement("span");
+      line.className = cls;
+      line.textContent = `${stamp()} ${msg}\n`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    $("clear").onclick = () => { logEl.textContent = ""; };
+
+    // ---------- Ambiente ----------
+    $("coi").textContent = String(self.crossOriginIsolated);
+    $("sab").textContent = String(typeof SharedArrayBuffer !== "undefined");
+
+    function setEngine(s, label) { const e = $("engineState"); e.dataset.s = s; e.textContent = label; }
+
+    const TESTS = ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"];
+    const enableTests = (on) => TESTS.forEach((id) => { $(id).disabled = !(on && file); });
+
+    // ---------- (Re)cria uma instância LIMPA do motor ----------
+    // Cada teste roda numa instância nova: o core ST 0.12.10 não reseta limpo
+    // entre execs, então só a 1ª passada é confiável. terminate()+new+load()
+    // garante que todo teste seja um "1º exec" → dados não contaminados.
+    async function freshEngine(label) {
+      if (ffmpeg) { try { ffmpeg.terminate(); } catch {} ffmpeg = null; }
+      const wantMT = $("useMT") && $("useMT").checked;
+      if (wantMT && !self.crossOriginIsolated) {
+        log("MT pedido mas crossOriginIsolated=false (falta COOP/COEP — rode via serve.py). Caindo p/ ST.", "l-err");
+      }
+      const mt = wantMT && self.crossOriginIsolated;
+      const core = mt ? CORE_MT : CORE_ST;
+      setEngine("loading", `recriando motor (${mt ? "MT" : "ST"})…`);
+      log(`${label}: nova instância (${mt ? "multithread" : "single-thread"})…`, "l-step");
+      const f = new FFmpeg();
+      // Logs crus do core — é AQUI que se vê onde o decode trava ("Stream mapping", "frame=…").
+      f.on("log", ({ message }) => log("  ff › " + message, "l-ff"));
+      const start = performance.now();
+      await f.load(mt
+        ? { coreURL: core.js, wasmURL: core.wasm, workerURL: core.worker }
+        : { coreURL: core.js, wasmURL: core.wasm });
+      ffmpeg = f;
+      const ms = Math.round(performance.now() - start);
+      log(`Motor ${mt ? "MT" : "ST"} carregado em ${ms} ms.`, "l-ok");
+      return ffmpeg;
+    }
+
+    // ---------- Carga inicial (só confirma que o core carrega) ----------
+    async function load() {
+      try {
+        await freshEngine("Carga inicial");
+        setEngine("ready", "pronto");
+        enableTests(true);
+      } catch (err) {
+        setEngine("error", "falha no load");
+        log("FALHA ao carregar o motor: " + (err?.message || err), "l-err");
+      }
+    }
+
+    // ---------- Seleção de arquivo ----------
+    $("file").addEventListener("change", async (e) => {
+      file = e.target.files?.[0] || null;
+      if (!file) return;
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      $("fileInfo").textContent = `${file.name} · ${mb} MB`;
+      log(`Arquivo selecionado: ${file.name} (${mb} MB)`, "l-info");
+      enableTests(true);
+    });
+
+    // ---------- Helpers de FS ----------
+    function inputName() {
+      const ext = (file.name.split(".").pop() || "dat").toLowerCase();
+      return `input.${ext}`;
+    }
+    async function writeInput() {
+      const name = inputName();
+      log(`Gravando ${name} no FS do motor…`, "l-info");
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const bytes = buf.length; // captura ANTES: writeFile TRANSFERE o buffer → fica detached (length 0)
+      await ffmpeg.writeFile(name, buf);
+      log(`Gravado (${(bytes / 1024 / 1024).toFixed(1)} MB).`, "l-info");
+      return name;
+    }
+    // Apaga SÓ os frames de saída (prefixo), NUNCA o input — apagar o input era
+    // o bug que fazia o exec #1 do T5 falhar com "No such file".
+    async function cleanOutputs(prefix) {
+      try {
+        const dir = await ffmpeg.listDir("/");
+        for (const e of dir) {
+          if (!e.isDir && prefix && e.name.startsWith(prefix)) {
+            try { await ffmpeg.deleteFile(e.name); } catch {}
+          }
+        }
+      } catch {}
+    }
+    async function countOutputs(prefix) {
+      const dir = await ffmpeg.listDir("/");
+      return dir.filter((e) => !e.isDir && e.name.startsWith(prefix)).length;
+    }
+
+    // ---------- Executor com watchdog (instância LIMPA por teste) ----------
+    async function runExec(testName, argsFor, prefix) {
+      if (busy) return;
+      busy = true;
+      enableTests(false);
+      const timeoutS = Math.max(10, parseInt($("timeout").value, 10) || 120);
+      log(`──────── ${testName} ────────`, "l-step");
+
+      let timedOut = false;
+      try {
+        await freshEngine(testName);           // ← cada teste começa do ZERO
+        setEngine("running", `${testName} em execução…`);
+        const name = await writeInput();
+        const args = argsFor(name);
+        log(`exec: ffmpeg ${args.join(" ")}`, "l-info");
+        const start = performance.now();
+        log(`Iniciando exec… (watchdog ${timeoutS}s)`, "l-step");
+
+        const watchdog = new Promise((_, rej) =>
+          setTimeout(() => { timedOut = true; rej(new Error(`TIMEOUT após ${timeoutS}s — decode travou`)); }, timeoutS * 1000)
+        );
+        await Promise.race([ffmpeg.exec(args), watchdog]);
+
+        const ms = Math.round(performance.now() - start);
+        const n = await countOutputs(prefix);
+        setEngine("ok", `${testName} OK`);
+        log(`✅ ${testName} concluído em ${ms} ms · ${n} frame(s) gerado(s).`, "l-ok");
+      } catch (err) {
+        if (timedOut) {
+          setEngine("timeout", `${testName} TIMEOUT`);
+          log(`⏱️ ${testName}: ${err.message}. O motor ficou preso no decode.`, "l-err");
+        } else {
+          setEngine("error", `${testName} erro`);
+          log(`❌ ${testName} falhou: ${err?.message || err}`, "l-err");
+        }
+      } finally {
+        busy = false;
+        enableTests(true); // o próximo teste recria a instância → recupera mesmo após TIMEOUT
+      }
+    }
+
+    // ---------- Definição dos testes (instância nova a cada um) ----------
+    // T1 — decode mínimo: 1 frame escalado. Prova que QUALQUER exec roda no Chrome.
+    $("t1").onclick = () => runExec("T1 (1 frame)", (inp) => [
+      "-i", inp, "-map", "0:v:0", "-an",
+      "-frames:v", "1", "-vf", "scale=320:-1", "-q:v", "5", "t1_%05d.jpg",
+    ], "t1_");
+
+    // T2 — só os 2 primeiros segundos (separa "codec" de "tamanho/memória").
+    $("t2").onclick = () => runExec("T2 (gray -t 2)", (inp) => [
+      "-i", inp, "-t", "2", "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-q:v", "5", "g_%05d.jpg",
+    ], "g_");
+
+    // T3 — metade do arquivo (-t 6).
+    $("t3").onclick = () => runExec("T3 (gray -t 6)", (inp) => [
+      "-i", inp, "-t", "6", "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-q:v", "5", "g_%05d.jpg",
+    ], "g_");
+
+    // T4 — DECISIVO: extração gray do ARQUIVO INTEIRO numa instância limpa
+    // (= a passada 1 real do app). Se isto completar, o conserto é instância/passada.
+    $("t4").onclick = () => runExec("T4 (gray INTEIRO — passada real)", (inp) => [
+      "-i", inp, "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-q:v", "5", "g_%05d.jpg",
+    ], "g_");
+
+    // T5 — PROVA do bug: 2 execs na MESMA instância (sem recriar). Esperado:
+    // o 1º exec ok, o 2º degrada/trava → confirma que o reuso é a parede.
+    $("t5").onclick = async () => {
+      if (busy) return;
+      busy = true; enableTests(false);
+      const timeoutS = Math.max(10, parseInt($("timeout").value, 10) || 120);
+      log(`──────── T5 (reuso: 2× exec na mesma instância) ────────`, "l-step");
+      try {
+        await freshEngine("T5");
+        const name = await writeInput();
+        const args = ["-i", name, "-t", "2", "-map", "0:v:0", "-an",
+                      "-vf", "scale=320:ih,format=gray", "-q:v", "5", "g_%05d.jpg"];
+        for (let pass = 1; pass <= 2; pass++) {
+          log(`— exec #${pass} (mesma instância) —`, "l-step");
+          setEngine("running", `T5 exec #${pass}…`);
+          await cleanOutputs("g_"); // limpa saídas do exec anterior (mantém o input)
+          const start = performance.now();
+          const watchdog = new Promise((_, rej) =>
+            setTimeout(() => rej(new Error(`TIMEOUT após ${timeoutS}s no exec #${pass}`)), timeoutS * 1000));
+          try {
+            await Promise.race([ffmpeg.exec(args), watchdog]);
+            const ms = Math.round(performance.now() - start);
+            const n = await countOutputs("g_");
+            log(`exec #${pass}: ${ms} ms · ${n} frame(s).`, n ? "l-ok" : "l-err");
+          } catch (err) {
+            log(`exec #${pass} travou/falhou: ${err.message}`, "l-err");
+            break;
+          }
+        }
+        setEngine("ok", "T5 concluído");
+      } catch (err) {
+        setEngine("error", "T5 erro");
+        log(`❌ T5: ${err?.message || err}`, "l-err");
+      } finally {
+        busy = false; enableTests(true);
+      }
+    };
+
+    // ---------- DECISIVO: extração do arquivo INTEIRO, com/sem warm-up ----------
+    // Hipótese: o 1º exec pesado num worker FRIO trava; um exec trivial antes
+    // ("warm-up") aquece o worker e a extração real completa.
+    async function runFull(testName, { warmup }) {
+      if (busy) return;
+      busy = true; enableTests(false);
+      const timeoutS = Math.max(10, parseInt($("timeout").value, 10) || 120);
+      log(`──────── ${testName} ────────`, "l-step");
+      try {
+        await freshEngine(testName);
+        const name = await writeInput();
+
+        if (warmup) {
+          log("warm-up: decodifica 1 frame p/ 'aquecer' o worker…", "l-step");
+          try {
+            await ffmpeg.exec(["-i", name, "-map", "0:v:0", "-an",
+              "-frames:v", "1", "-vf", "scale=320:-1", "-q:v", "5", "wu_%05d.jpg"]);
+            log(`warm-up ok (${await countOutputs("wu_")} frame).`, "l-ok");
+            await cleanOutputs("wu_");
+          } catch (e) { log("warm-up falhou: " + e.message, "l-err"); }
+        }
+
+        const args = ["-i", name, "-map", "0:v:0", "-an",
+          "-vf", "scale=320:ih,format=gray", "-q:v", "5", "g_%05d.jpg"];
+        log(`exec real (arquivo INTEIRO): ffmpeg ${args.join(" ")}`, "l-info");
+        setEngine("running", `${testName} em execução…`);
+        const start = performance.now();
+        const watchdog = new Promise((_, rej) =>
+          setTimeout(() => rej(new Error(`TIMEOUT após ${timeoutS}s — travou`)), timeoutS * 1000));
+        await Promise.race([ffmpeg.exec(args), watchdog]);
+        const ms = Math.round(performance.now() - start);
+        const n = await countOutputs("g_");
+        setEngine("ok", `${testName} OK`);
+        log(`✅ ${testName}: ${ms} ms · ${n} frame(s) — esperado ~354.`, n ? "l-ok" : "l-err");
+      } catch (err) {
+        setEngine("error", `${testName} travou/erro`);
+        log(`❌ ${testName}: ${err?.message || err}`, "l-err");
+      } finally {
+        busy = false; enableTests(true);
+      }
+    }
+
+    // T6 — warm-up + INTEIRO (esperado: COMPLETA).
+    $("t6").onclick = () => runFull("T6 (warm-up + INTEIRO)", { warmup: true });
+    // T7 — INTEIRO direto, worker frio (esperado: TRAVA → baixe o watchdog p/ ~30s).
+    $("t7").onclick = () => runFull("T7 (INTEIRO direto, frio)", { warmup: false });
+
+    // ===== TROCA DE OPERAÇÃO (arquivo INTEIRO, instância nova por teste) =====
+    // Mesmo decode+filtro do T7 (que trava); muda só o que se faz com os frames.
+
+    // T9 — decode + scale + gray, mas SEM encode (descarta em -f null).
+    //  Completou? → o decode/filtro do MXF inteiro vai bem; o hang é o ENCODER.
+    $("t9").onclick = () => runExec("T9 (sem encode, -f null)", (inp) => [
+      "-i", inp, "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-f", "null", "-",
+    ], "__nada__");
+
+    // T10 — candidato a fix: TODOS os frames gray num ÚNICO arquivo rawvideo.
+    //  O app leria 'g.raw' (320 * 1080 bytes por frame) e calcularia o field-diff
+    //  direto dos bytes — sem 354 JPEGs nem createImageBitmap.
+    $("t10").onclick = () => runExec("T10 (rawvideo 1 arquivo)", (inp) => [
+      "-i", inp, "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-f", "rawvideo", "-pix_fmt", "gray", "g.raw",
+    ], "g.raw");
+
+    // T8 — mesma extração, mas encoder PNG no lugar do mjpeg.
+    $("t8").onclick = () => runExec("T8 (INTEIRO em PNG)", (inp) => [
+      "-i", inp, "-map", "0:v:0", "-an",
+      "-vf", "scale=320:ih,format=gray", "-c:v", "png", "g_%05d.png",
+    ], "g_");
+
+    // Carrega o motor automaticamente ao abrir.
+    load();
+  </script>
+</body>
+</html>
